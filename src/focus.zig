@@ -3,24 +3,32 @@ const layout = @import("./layout.zig");
 
 var next_id: usize = 0;
 
+const FocusKind = enum {
+    container,
+    text,
+    text_box,
+};
+
+const Child = struct {
+    parent_id: usize,
+    focus: *Focus,
+    rect: layout.URect,
+};
+
 pub const Focus = struct {
     id: usize,
+    kind: FocusKind,
     child_id: ?usize,
     grandchild_id: ?usize,
     focusable: bool,
     children: std.AutoHashMap(usize, Child),
 
-    const Child = struct {
-        parent_id: usize,
-        focus: *Focus,
-        rect: layout.URect,
-    };
-
-    pub fn init(allocator: std.mem.Allocator) Focus {
+    pub fn init(allocator: std.mem.Allocator, kind: FocusKind) Focus {
         const id = next_id;
         next_id += 1;
         return .{
             .id = id,
+            .kind = kind,
             .child_id = null,
             .grandchild_id = null,
             .focusable = false,

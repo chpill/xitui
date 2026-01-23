@@ -14,7 +14,7 @@ pub fn Text(comptime Widget: type) type {
         pub fn init(allocator: std.mem.Allocator, content: []const u8) Text(Widget) {
             return .{
                 .allocator = allocator,
-                .focus = Focus.init(allocator),
+                .focus = Focus.init(allocator, .text),
                 .grid = null,
                 .content = content,
             };
@@ -99,7 +99,7 @@ pub fn Box(comptime Widget: type) type {
 
         pub fn init(allocator: std.mem.Allocator, border_style: ?BorderStyle, direction: Direction) !Box(Widget) {
             return .{
-                .focus = Focus.init(allocator),
+                .focus = Focus.init(allocator, .container),
                 .grid = null,
                 .allocator = allocator,
                 .children = std.AutoArrayHashMap(usize, Child).init(allocator),
@@ -410,6 +410,7 @@ pub fn TextBox(comptime Widget: type) type {
 
             var box = try Box(Widget).init(allocator, border_style, .vert);
             errdefer box.deinit();
+            box.getFocus().kind = .text_box;
             for (lines.items) |line| {
                 var text = Text(Widget).init(allocator, line);
                 errdefer text.deinit();
@@ -624,7 +625,7 @@ pub fn Stack(comptime Widget: type) type {
 
         pub fn init(allocator: std.mem.Allocator) Stack(Widget) {
             return .{
-                .focus = Focus.init(allocator),
+                .focus = Focus.init(allocator, .container),
                 .children = std.AutoArrayHashMap(usize, Widget).init(allocator),
             };
         }
