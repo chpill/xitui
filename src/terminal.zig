@@ -71,6 +71,98 @@ pub const Core = switch (builtin.os.tag) {
             lpNumberOfEventsRead: *std.os.windows.DWORD,
         ) callconv(.winapi) std.os.windows.BOOL;
 
+        pub extern "kernel32" fn GetConsoleMode(
+            hConsoleHandle: std.os.windows.HANDLE,
+            lpMode: *std.os.windows.DWORD,
+        ) callconv(.winapi) std.os.windows.BOOL;
+
+        pub extern "kernel32" fn SetConsoleMode(
+            hConsoleHandle: std.os.windows.HANDLE,
+            dwMode: std.os.windows.DWORD,
+        ) callconv(.winapi) std.os.windows.BOOL;
+
+        pub const SMALL_RECT = extern struct {
+            Left: std.os.windows.SHORT,
+            Top: std.os.windows.SHORT,
+            Right: std.os.windows.SHORT,
+            Bottom: std.os.windows.SHORT,
+        };
+
+        pub const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
+            dwSize: std.os.windows.COORD,
+            dwCursorPosition: std.os.windows.COORD,
+            wAttributes: std.os.windows.WORD,
+            srWindow: SMALL_RECT,
+            dwMaximumWindowSize: std.os.windows.COORD,
+        };
+
+        pub extern "kernel32" fn GetConsoleScreenBufferInfo(
+            hConsoleOutput: std.os.windows.HANDLE,
+            lpConsoleScreenBufferInfo: *CONSOLE_SCREEN_BUFFER_INFO,
+        ) callconv(.winapi) std.os.windows.BOOL;
+
+        pub const HANDLER_ROUTINE = *const fn (dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
+
+        pub extern "kernel32" fn SetConsoleCtrlHandler(
+            HandlerRoutine: ?HANDLER_ROUTINE,
+            Add: std.os.windows.BOOL,
+        ) callconv(.winapi) std.os.windows.BOOL;
+
+        pub extern "kernel32" fn WriteConsoleW(
+            hConsoleOutput: std.os.windows.HANDLE,
+            lpBuffer: [*]const u16,
+            nNumberOfCharsToWrite: std.os.windows.DWORD,
+            lpNumberOfCharsWritten: ?*std.os.windows.DWORD,
+            lpReserved: ?std.os.windows.LPVOID,
+        ) callconv(.winapi) std.os.windows.BOOL;
+
+        pub extern "kernel32" fn WaitForSingleObjectEx(
+            hHandle: std.os.windows.HANDLE,
+            dwMilliseconds: std.os.windows.DWORD,
+            bAlertable: std.os.windows.BOOL,
+        ) callconv(.winapi) std.os.windows.DWORD;
+
+        pub fn setConsoleCtrlHandler(handler_routine: ?HANDLER_ROUTINE, add: bool) !void {
+            const success = SetConsoleCtrlHandler(
+                handler_routine,
+                if (add) .TRUE else .FALSE,
+            );
+
+            if (success == .FALSE) {
+                return switch (std.os.windows.GetLastError()) {
+                    else => |err| std.os.windows.unexpectedError(err),
+                };
+            }
+        }
+
+        pub const WaitForSingleObjectError = error{
+            WaitAbandoned,
+            WaitTimeOut,
+            Unexpected,
+        };
+
+        pub fn waitForSingleObject(handle: std.os.windows.HANDLE, milliseconds: std.os.windows.DWORD) WaitForSingleObjectError!void {
+            return waitForSingleObjectEx(handle, milliseconds, false);
+        }
+
+        pub const WAIT_ABANDONED = 0x00000080;
+        pub const WAIT_ABANDONED_0 = WAIT_ABANDONED + 0;
+        pub const WAIT_OBJECT_0 = 0x00000000;
+        pub const WAIT_TIMEOUT = 0x00000102;
+        pub const WAIT_FAILED = 0xFFFFFFFF;
+
+        pub fn waitForSingleObjectEx(handle: std.os.windows.HANDLE, milliseconds: std.os.windows.DWORD, alertable: bool) WaitForSingleObjectError!void {
+            switch (WaitForSingleObjectEx(handle, milliseconds, if (alertable) .TRUE else .FALSE)) {
+                WAIT_ABANDONED => return error.WaitAbandoned,
+                WAIT_OBJECT_0 => return,
+                WAIT_TIMEOUT => return error.WaitTimeOut,
+                WAIT_FAILED => switch (std.os.windows.GetLastError()) {
+                    else => |err| return std.os.windows.unexpectedError(err),
+                },
+                else => return error.Unexpected,
+            }
+        }
+
         pub const Tty = struct {
             old_out_mode: std.os.windows.DWORD,
 
@@ -91,8 +183,8 @@ pub const Core = switch (builtin.os.tag) {
                 const num_chars = std.unicode.utf16CountCodepoints(utf16_bytes) catch return error.WriteFailed;
                 var num_chars_written: std.os.windows.DWORD = undefined;
 
-                const out_handle = std.fs.File.stdout().handle;
-                if (0 == std.os.windows.kernel32.WriteConsoleW(out_handle, utf16_bytes.ptr, @intCast(num_chars), &num_chars_written, null)) {
+                const out_handle = std.Io.File.stdout().handle;
+                if (WriteConsoleW(out_handle, utf16_bytes.ptr, @intCast(num_chars), &num_chars_written, null) == .FALSE) {
                     return error.WriteFailed;
                 }
 
@@ -122,13 +214,13 @@ pub const Core = switch (builtin.os.tag) {
         };
 
         fn uncook(self: *Core) !void {
-            const out_handle = std.fs.File.stdout().handle;
-            if (0 == std.os.windows.kernel32.GetConsoleMode(out_handle, &self.tty.old_out_mode)) {
+            const out_handle = std.Io.File.stdout().handle;
+            if (GetConsoleMode(out_handle, &self.tty.old_out_mode) == .FALSE) {
                 return error.FailedToGetConsoleMode;
             }
             const ENABLE_WRAP_AT_EOL_OUTPUT: std.os.windows.DWORD = 0x0002;
             const new_out_mode = self.tty.old_out_mode & ~ENABLE_WRAP_AT_EOL_OUTPUT;
-            if (0 == std.os.windows.kernel32.SetConsoleMode(out_handle, new_out_mode)) {
+            if (SetConsoleMode(out_handle, new_out_mode) == .FALSE) {
                 return error.FailedToSetConsoleMode;
             }
             errdefer self.cook() catch {};
@@ -146,23 +238,23 @@ pub const Core = switch (builtin.os.tag) {
             try attributeReset(&self.writer.interface);
             try self.writer.interface.flush();
 
-            const out_handle = std.fs.File.stdout().handle;
-            _ = std.os.windows.kernel32.SetConsoleMode(out_handle, self.tty.old_out_mode);
+            const out_handle = std.Io.File.stdout().handle;
+            _ = SetConsoleMode(out_handle, self.tty.old_out_mode);
         }
 
-        fn readKey(_: *Core) !?inp.Key {
+        fn readKey(_: *Core, _: std.Io) !?inp.Key {
             while (true) {
-                const in_handle = std.fs.File.stdin().handle;
+                const in_handle = std.Io.File.stdin().handle;
                 var event_buffer: [1]INPUT_RECORD = undefined;
                 var num_events_read: std.os.windows.DWORD = undefined;
                 // exit early if there is no event ready to read
-                std.os.windows.WaitForSingleObject(in_handle, 0) catch |err| switch (err) {
+                waitForSingleObject(in_handle, 0) catch |err| switch (err) {
                     error.WaitAbandoned => return null,
                     error.WaitTimeOut => return null,
                     error.Unexpected => |e| return e,
                 };
                 // read events from the buffer
-                if (0 == ReadConsoleInputW(in_handle, @ptrCast(&event_buffer), event_buffer.len, &num_events_read)) {
+                if (ReadConsoleInputW(in_handle, @ptrCast(&event_buffer), event_buffer.len, &num_events_read) == .FALSE) {
                     return error.FailedToReadConsoleInputW;
                 }
                 const event_type = event_buffer[0].EventType;
@@ -171,7 +263,7 @@ pub const Core = switch (builtin.os.tag) {
                     // KEY_EVENT
                     0x0001 => {
                         // ignore key up events
-                        if (0 == event.KeyEvent.bKeyDown) {
+                        if (event.KeyEvent.bKeyDown == .FALSE) {
                             continue;
                         }
                         // if unicode char is not zero, return the codepoint
@@ -210,9 +302,9 @@ pub const Core = switch (builtin.os.tag) {
         }
     },
     else => struct {
-        tty: std.fs.File,
+        tty: std.Io.File,
         write_buffer: []u8,
-        writer: std.fs.File.Writer,
+        writer: std.Io.File.Writer,
         allocator: std.mem.Allocator,
         cooked_termios: std.posix.termios,
         raw: std.posix.termios,
@@ -321,7 +413,7 @@ pub const Core = switch (builtin.os.tag) {
             return null;
         }
 
-        fn readKey(self: *Core) !?inp.Key {
+        fn readKey(self: *Core, io: std.Io) !?inp.Key {
             defer self.esc_buffer.clearRetainingCapacity();
 
             // if there is any key in the queue, return it
@@ -334,7 +426,10 @@ pub const Core = switch (builtin.os.tag) {
 
             const buffer_size = 32;
             var buffer: [buffer_size]u8 = undefined;
-            const size = try self.tty.read(&buffer);
+            const size = self.tty.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
+                error.EndOfStream => return null,
+                else => |e| return e,
+            };
             var key_maybe: ?inp.Key = null;
 
             if (size > 0) {
@@ -365,7 +460,7 @@ pub const Terminal = struct {
     core: Core,
     size: Size,
 
-    pub fn init(allocator: std.mem.Allocator) !Terminal {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator) !Terminal {
         switch (builtin.os.tag) {
             .windows => {
                 const tty = Core.Tty{
@@ -390,17 +485,19 @@ pub const Terminal = struct {
 
                 const handler = struct {
                     fn run(fdw_ctrl_type: std.os.windows.DWORD) callconv(.c) std.os.windows.BOOL {
+                        const CTRL_C_EVENT: std.os.windows.DWORD = 0;
+
                         switch (fdw_ctrl_type) {
-                            std.os.windows.CTRL_C_EVENT => {
+                            CTRL_C_EVENT => {
                                 quit = true;
-                                return std.os.windows.TRUE;
+                                return .TRUE;
                             },
                             else => {},
                         }
-                        return std.os.windows.FALSE;
+                        return .FALSE;
                     }
                 }.run;
-                try std.os.windows.SetConsoleCtrlHandler(handler, true);
+                try Core.setConsoleCtrlHandler(handler, true);
 
                 try self.core.writer.interface.writeAll("\x1B[?1049h"); // clear screen
                 try self.core.writer.interface.flush();
@@ -409,8 +506,8 @@ pub const Terminal = struct {
                 return self;
             },
             else => {
-                var tty = try std.fs.cwd().openFile("/dev/tty", .{ .mode = .read_write });
-                errdefer tty.close();
+                var tty = try std.Io.Dir.cwd().openFile(io, "/dev/tty", .{ .mode = .read_write });
+                errdefer tty.close(io);
 
                 // just needs to be able to hold the largest possible escape code
                 var esc_buffer = try std.ArrayList(u8).initCapacity(allocator, 32);
@@ -423,7 +520,7 @@ pub const Terminal = struct {
                     .core = .{
                         .tty = tty,
                         .write_buffer = write_buffer,
-                        .writer = tty.writer(write_buffer),
+                        .writer = tty.writer(io, write_buffer),
                         .allocator = allocator,
                         .cooked_termios = undefined,
                         .raw = undefined,
@@ -437,7 +534,7 @@ pub const Terminal = struct {
                 errdefer self.core.cook() catch {};
 
                 const handler = struct {
-                    fn run(_: c_int) callconv(.c) void {
+                    fn run(_: std.posix.SIG) callconv(.c) void {
                         quit = true;
                     }
                 }.run;
@@ -459,7 +556,7 @@ pub const Terminal = struct {
         }
     }
 
-    pub fn deinit(self: *Terminal) void {
+    pub fn deinit(self: *Terminal, io: std.Io) void {
         switch (builtin.os.tag) {
             .windows => {
                 self.core.cook() catch {};
@@ -473,7 +570,7 @@ pub const Terminal = struct {
                     const key_and_node: *Core.KeyAndNode = @fieldParentPtr("node", node);
                     self.core.allocator.destroy(key_and_node);
                 }
-                self.core.tty.close();
+                self.core.tty.close(io);
             },
         }
     }
@@ -481,9 +578,9 @@ pub const Terminal = struct {
     pub fn getSize(self: *const Terminal) !Size {
         switch (builtin.os.tag) {
             .windows => {
-                const out_handle = std.fs.File.stdout().handle;
-                var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-                if (0 == std.os.windows.kernel32.GetConsoleScreenBufferInfo(out_handle, &info)) {
+                const out_handle = std.Io.File.stdout().handle;
+                var info: Core.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+                if (Core.GetConsoleScreenBufferInfo(out_handle, &info) == .FALSE) {
                     return error.FailedToGetConsoleScreenBufferInfo;
                 }
                 const width = info.srWindow.Right - info.srWindow.Left + 1;
@@ -508,8 +605,8 @@ pub const Terminal = struct {
         }
     }
 
-    pub fn readKey(self: *Terminal) !?inp.Key {
-        return self.core.readKey() catch |err| {
+    pub fn readKey(self: *Terminal, io: std.Io) !?inp.Key {
+        return self.core.readKey(io) catch |err| {
             // ignore error if terminal is quitting (SIGINT was sent)
             if (quit) {
                 return null;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const xitui = @import("xitui");
 const term = xitui.terminal;
 const wgt = xitui.widget;
@@ -8,10 +9,19 @@ const Grid = xitui.grid.Grid;
 const Focus = xitui.focus.Focus;
 
 pub fn main() !void {
+    // init allocator
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = if (builtin.mode == .Debug) debug_allocator.allocator() else std.heap.smp_allocator;
+    defer if (builtin.mode == .Debug) {
+        _ = debug_allocator.deinit();
+    };
+
+    // init io
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    defer threaded.deinit();
+    const io = threaded.io();
+
     // init root widget
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
     var root = Widget{ .widget_list = try WidgetList.init(allocator) };
     defer root.deinit();
 
@@ -25,8 +35,8 @@ pub fn main() !void {
     }
 
     // init term
-    var terminal = try term.Terminal.init(allocator);
-    defer terminal.deinit();
+    var terminal = try term.Terminal.init(io, allocator);
+    defer terminal.deinit(io);
 
     var last_size = layout.Size{ .width = 0, .height = 0 };
     var last_grid = try Grid.init(allocator, last_size);
@@ -37,7 +47,7 @@ pub fn main() !void {
         try terminal.render(&root, &last_grid, &last_size);
 
         // process any inputs
-        while (try terminal.readKey()) |key| {
+        while (try terminal.readKey(io)) |key| {
             switch (key) {
                 .codepoint => |cp| if (cp == 'q') return,
                 else => {},
@@ -52,7 +62,7 @@ pub fn main() !void {
         }, root.getFocus());
 
         // TODO: do variable sleep with target frame rate
-        std.Thread.sleep(5000000);
+        try std.Io.sleep(io, .fromMilliseconds(5), .real);
     }
 }
 
@@ -81,14 +91,14 @@ const WidgetList = struct {
             var text_box = try wgt.TextBox(Widget).init(allocator, "this is a TextBox", .single, .none);
             errdefer text_box.deinit();
             text_box.getFocus().focusable = true;
-            try inner_box.children.put(text_box.getFocus().id, .{ .widget = .{ .text_box = text_box }, .rect = null, .min_size = null });
+            try inner_box.children.put(allocator, text_box.getFocus().id, .{ .widget = .{ .text_box = text_box }, .rect = null, .min_size = null });
         }
 
         {
             var text_box = try wgt.TextBox(Widget).init(allocator, "this is a\nmulti-line TextBox", .single, .none);
             errdefer text_box.deinit();
             text_box.getFocus().focusable = true;
-            try inner_box.children.put(text_box.getFocus().id, .{ .widget = .{ .text_box = text_box }, .rect = null, .min_size = null });
+            try inner_box.children.put(allocator, text_box.getFocus().id, .{ .widget = .{ .text_box = text_box }, .rect = null, .min_size = null });
         }
 
         if (inner_box.children.count() > 0) {

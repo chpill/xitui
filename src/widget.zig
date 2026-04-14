@@ -82,7 +82,7 @@ pub fn Box(comptime Widget: type) type {
         focus: Focus,
         grid: ?Grid,
         allocator: std.mem.Allocator,
-        children: std.AutoArrayHashMap(usize, Child),
+        children: std.AutoArrayHashMapUnmanaged(usize, Child),
         border_style: ?BorderStyle,
         direction: Direction,
 
@@ -102,7 +102,7 @@ pub fn Box(comptime Widget: type) type {
                 .focus = Focus.init(allocator, .container),
                 .grid = null,
                 .allocator = allocator,
-                .children = std.AutoArrayHashMap(usize, Child).init(allocator),
+                .children = .empty,
                 .border_style = border_style,
                 .direction = direction,
             };
@@ -117,7 +117,7 @@ pub fn Box(comptime Widget: type) type {
             for (self.children.values()) |*child| {
                 child.widget.deinit();
             }
-            self.children.deinit();
+            self.children.deinit(self.allocator);
         }
 
         pub fn build(self: *Box(Widget), constraint: layout.Constraint, root_focus: *Focus) !void {
@@ -131,11 +131,11 @@ pub fn Box(comptime Widget: type) type {
                 if (max_height <= border_size * 2) return;
             }
 
-            var sorted_children = std.AutoArrayHashMap(usize, void).init(self.allocator);
-            defer sorted_children.deinit();
+            var sorted_children: std.AutoArrayHashMapUnmanaged(usize, void) = .empty;
+            defer sorted_children.deinit(self.allocator);
             var should_sort = false;
             for (self.children.values(), 0..) |child, i| {
-                try sorted_children.put(i, {});
+                try sorted_children.put(self.allocator, i, {});
                 if (child.min_size != null) {
                     should_sort = true;
                 }
@@ -385,7 +385,7 @@ pub fn TextBox(comptime Widget: type) type {
             border_style: ?BorderStyle,
             wrap_kind: WrapKind,
         ) !TextBox(Widget) {
-            var lines = std.ArrayList([]const u8){};
+            var lines: std.ArrayList([]const u8) = .empty;
             errdefer {
                 for (lines.items) |line| {
                     allocator.free(line);
@@ -394,7 +394,7 @@ pub fn TextBox(comptime Widget: type) type {
             }
 
             {
-                var line = std.ArrayList(u8){};
+                var line: std.ArrayList(u8) = .empty;
                 errdefer line.deinit(allocator);
 
                 var utf8 = (try std.unicode.Utf8View.init(content)).iterator();
@@ -414,7 +414,7 @@ pub fn TextBox(comptime Widget: type) type {
             for (lines.items) |line| {
                 var text = Text(Widget).init(allocator, line);
                 errdefer text.deinit();
-                try box.children.put(text.getFocus().id, .{ .widget = .{ .text = text }, .rect = null, .min_size = null });
+                try box.children.put(allocator, text.getFocus().id, .{ .widget = .{ .text = text }, .rect = null, .min_size = null });
             }
 
             return .{
@@ -451,7 +451,7 @@ pub fn TextBox(comptime Widget: type) type {
                             }
                             self.lines.clearAndFree(self.allocator);
 
-                            var line = std.ArrayList(u8){};
+                            var line: std.ArrayList(u8) = .empty;
                             errdefer line.deinit(self.allocator);
 
                             var utf8 = (try std.unicode.Utf8View.init(self.content)).iterator();
@@ -476,7 +476,7 @@ pub fn TextBox(comptime Widget: type) type {
                         for (self.lines.items) |line| {
                             var text = Text(Widget).init(self.allocator, line);
                             errdefer text.deinit();
-                            try self.box.children.put(text.getFocus().id, .{ .widget = .{ .text = text }, .rect = null, .min_size = null });
+                            try self.box.children.put(self.allocator, text.getFocus().id, .{ .widget = .{ .text = text }, .rect = null, .min_size = null });
                         }
                     }
                 }
@@ -621,12 +621,14 @@ pub fn Scroll(comptime Widget: type) type {
 pub fn Stack(comptime Widget: type) type {
     return struct {
         focus: Focus,
-        children: std.AutoArrayHashMap(usize, Widget),
+        children: std.AutoArrayHashMapUnmanaged(usize, Widget),
+        allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator) Stack(Widget) {
             return .{
                 .focus = Focus.init(allocator, .container),
-                .children = std.AutoArrayHashMap(usize, Widget).init(allocator),
+                .children = .empty,
+                .allocator = allocator,
             };
         }
 
@@ -635,7 +637,7 @@ pub fn Stack(comptime Widget: type) type {
             for (self.children.values()) |*child| {
                 child.deinit();
             }
-            self.children.deinit();
+            self.children.deinit(self.allocator);
         }
 
         pub fn build(self: *Stack(Widget), constraint: layout.Constraint, root_focus: *Focus) !void {

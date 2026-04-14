@@ -83,7 +83,7 @@ pub const Grid = struct {
             return error.EmptyGrid;
         }
 
-        var buffer = std.ArrayList(u8){};
+        var buffer: std.ArrayList(u8) = .empty;
         errdefer buffer.deinit(allocator);
 
         for (0..self.size.height) |y| {
