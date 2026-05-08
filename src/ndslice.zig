@@ -82,7 +82,7 @@ test "simple slice" {
     const ImageSlice = NDSlice([3]u8, 2, .row_major);
 
     // we need to create a buffer to put the slice on
-    var image_buffer = [_][3]u8{.{ 0, 0, 0 }} ** 30; // 6x5 image (width X height)
+    var image_buffer: [30][3]u8 = @splat(.{ 0, 0, 0 }); // 6x5 image (width X height)
 
     // this slice is created over that buffer.
     const image = try ImageSlice.init(.{ 5, 6 }, &image_buffer); // by convention height is the first dimension

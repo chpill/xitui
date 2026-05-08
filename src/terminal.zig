@@ -176,7 +176,7 @@ pub const Core = switch (builtin.os.tag) {
 
                 const utf8_bytes = w.buffered();
 
-                var utf16_buffer = [_]u16{0} ** write_buffer_size;
+                var utf16_buffer: [write_buffer_size]u16 = @splat(0);
                 const size = std.unicode.utf8ToUtf16Le(&utf16_buffer, utf8_bytes) catch return error.WriteFailed;
                 const utf16_bytes = utf16_buffer[0..size];
 
@@ -268,7 +268,7 @@ pub const Core = switch (builtin.os.tag) {
                         }
                         // if unicode char is not zero, return the codepoint
                         if (event.KeyEvent.uChar.UnicodeChar > 0) {
-                            var utf8_buffer = [_]u8{0} ** 4;
+                            var utf8_buffer: [4]u8 = @splat(0);
                             const size = try std.unicode.utf16LeToUtf8(&utf8_buffer, &[_]u16{event.KeyEvent.uChar.UnicodeChar});
                             return .{ .codepoint = try std.unicode.utf8Decode(utf8_buffer[0..size]) };
                         }
